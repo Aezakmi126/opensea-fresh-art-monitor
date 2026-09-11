@@ -398,7 +398,7 @@ def process_event(event):
 
 
 
-     profile = get_account_profile(creator)
+       profile = get_account_profile(creator)
 
     username = extract_username(profile)
     instagram = extract_instagram(profile)
@@ -412,7 +412,7 @@ def process_event(event):
     score = min(score, 100)
 
     if score < MIN_SCORE:
-        return  
+        return
 
     # ÐÐ°ÑÐ¸ÑÐ° Telegram HTML Ð¾Ñ ÑÐ¿ÐµÑÐ¸Ð°Ð»ÑÐ½ÑÑ ÑÐ¸Ð¼Ð²Ð¾Ð»Ð¾Ð²
     safe_name = html.escape(str(name))
