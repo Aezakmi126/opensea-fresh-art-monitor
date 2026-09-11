@@ -468,14 +468,14 @@ def main():
 
     print("OpenSea Fresh Art Monitor started")
 
-    send_telegram(
-        "â <b>OpenSea Fresh Art Monitor Ð·Ð°Ð¿ÑÑÐµÐ½</b>\n\n"
-        "ÐÑÑ ÑÐ²ÐµÐ¶Ð¸Ñ ÑÑÐ´Ð¾Ð¶Ð½Ð¸ÐºÐ¾Ð²:\n"
-        "â¢ 1-20 Ð½Ð°Ð¹Ð´ÐµÐ½Ð½ÑÑ mint-ÑÐ°Ð±Ð¾Ñ\n"
-        "â¢ Ð¿ÐµÑÐ²Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ° Ð½Ðµ ÑÑÐ°ÑÑÐµ 90 Ð´Ð½ÐµÐ¹\n"
-        "â¢ ÐºÐ¾ÑÐµÐ»ÐµÐº Ð°Ð²ÑÐ¾ÑÐ°\n"
-        "â¢ Instagram, ÐµÑÐ»Ð¸ ÑÐºÐ°Ð·Ð°Ð½"
-    )
+    send_telegram( "<b>OpenSea Fresh Art Monitor запущен</b>\n"
+        "Ищу новых авторов:\n"
+        "• 1–20 NFT\n"
+        "• возраст автора до 90 дней\n"
+        "• новые работы и минты\n"
+        "• ссылки на OpenSea и Instagram"
+        )
+
 
     while True:
         try:
