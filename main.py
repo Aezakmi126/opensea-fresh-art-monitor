@@ -424,7 +424,7 @@ def process_event(event):
     "| min_score =", MIN_SCORE,
 )
     if score < MIN_SCORE:
-    print("SKIP: score too low =",score)
+        print("SKIP: score too low =",score)
         return
 
     # ÐÐ°ÑÐ¸ÑÐ° Telegram HTML Ð¾Ñ ÑÐ¿ÐµÑÐ¸Ð°Ð»ÑÐ½ÑÑ ÑÐ¸Ð¼Ð²Ð¾Ð»Ð¾Ð²
