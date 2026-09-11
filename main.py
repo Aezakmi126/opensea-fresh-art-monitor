@@ -396,29 +396,23 @@ def process_event(event):
         collection,
     )
 
-    
-        
-    profile = get_account_profile(creator)
+
+
+     profile = get_account_profile(creator)
 
     username = extract_username(profile)
     instagram = extract_instagram(profile)
-if username:
-    score += 10
 
-if instagram:
-    score += 15
+    if username:
+        score += 10
 
-   score = min(score, 100)
+    if instagram:
+        score += 15
 
-if score < MIN_SCORE:
-    return
+    score = min(score, 100)
 
-
-    collection_name = (
-        collection.get("name")
-        or collection_slug
-        or "Untitled"
-    )
+    if score < MIN_SCORE:
+        return  
 
     # ÐÐ°ÑÐ¸ÑÐ° Telegram HTML Ð¾Ñ ÑÐ¿ÐµÑÐ¸Ð°Ð»ÑÐ½ÑÑ ÑÐ¸Ð¼Ð²Ð¾Ð»Ð¾Ð²
     safe_name = html.escape(str(name))
