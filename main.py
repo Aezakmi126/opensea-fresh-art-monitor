@@ -12,7 +12,7 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "50"))
 
 MAX_CREATOR_AGE_DAYS = 90
-MAX_MINTS = 20
+MAX_MINTS = 30
 
 # Исключаем служебные NFT, которые не являются работами художников
 SERVICE_NFT_KEYWORDS = [
@@ -116,7 +116,7 @@ def get_account_mints(address):
 
     params = [
         ("event_type", "mint"),
-        ("limit", 21),
+        ("limit", 31),
     ]
 
     data = api_get(
