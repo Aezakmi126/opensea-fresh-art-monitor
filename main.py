@@ -292,6 +292,14 @@ def process_event(event):
     token_id = nft.get("identifier")
     contract = nft.get("contract")
     collection_slug = nft.get("collection")
+    blocked_collections = {
+        "courtyard-nft",
+    }
+
+    if collection_slug in blocked_collections:
+        print("SKIP: blocked collection =", collection_slug)
+        return
+    
     name = nft.get("name") or f"NFT #{token_id}"
     chain = nft.get("chain") or "ethereum"
 
