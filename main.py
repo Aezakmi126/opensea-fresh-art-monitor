@@ -398,7 +398,7 @@ def process_event(event):
 
     
         
-profile = get_account_profile(creator)
+    profile = get_account_profile(creator)
 
     username = extract_username(profile)
     instagram = extract_instagram(profile)
@@ -408,7 +408,7 @@ if username:
 if instagram:
     score += 15
 
-score = min(score, 100)
+   score = min(score, 100)
 
 if score < MIN_SCORE:
     return
