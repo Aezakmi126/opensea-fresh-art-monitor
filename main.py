@@ -398,7 +398,7 @@ def process_event(event):
 
 
 
-       profile = get_account_profile(creator)
+    profile = get_account_profile(creator)
 
     username = extract_username(profile)
     instagram = extract_instagram(profile)
