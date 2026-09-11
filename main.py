@@ -118,10 +118,15 @@ def get_account_profile(address):
 
 
 def extract_creator(event):
+    if event.get("transfer_type") == "mint":
+        to_address = event.get("to_address")
+        if to_address:
+            return to_address
+
     from_address = event.get("from_address")
     if from_address:
         return from_address
-    
+
     maker = event.get("maker")
 
     if isinstance(maker, str):
@@ -133,7 +138,6 @@ def extract_creator(event):
             or maker.get("wallet")
             or maker.get("account")
         )
-
         if address:
             return address
 
@@ -144,11 +148,12 @@ def extract_creator(event):
 
     if isinstance(from_account, dict):
         address = from_account.get("address")
-
         if address:
             return address
 
     return None
+
+    
 
 
 def parse_event_timestamp(event):
