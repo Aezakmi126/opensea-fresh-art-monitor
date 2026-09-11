@@ -1,7 +1,8 @@
 import os
 import time
+import html
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 OPENSEA_API_KEY = os.getenv("OPENSEA_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -9,6 +10,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "70"))
+
+MAX_CREATOR_AGE_DAYS = 90
+MAX_MINTS = 20
 
 BASE_URL = "https://api.opensea.io/api/v2"
 
@@ -21,7 +25,10 @@ seen = set()
 
 
 def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
 
     response = requests.post(
         url,
@@ -34,7 +41,34 @@ def send_telegram(text):
         timeout=20,
     )
 
+    print("TELEGRAM STATUS:", response.status_code)
+
+    if response.status_code != 200:
+        print("TELEGRAM ERROR:", response.text)
+
     response.raise_for_status()
+
+
+def api_get(endpoint, params=None):
+    try:
+        response = requests.get(
+            f"{BASE_URL}{endpoint}",
+            headers=HEADERS,
+            params=params,
+            timeout=20,
+        )
+
+        print("OPENSEA:", endpoint, response.status_code)
+
+        if response.status_code != 200:
+            print("OPENSEA ERROR:", response.text[:500])
+            return {}
+
+        return response.json()
+
+    except requests.RequestException as error:
+        print("REQUEST ERROR:", repr(error))
+        return {}
 
 
 def get_recent_events():
@@ -47,19 +81,12 @@ def get_recent_events():
         ("limit", 100),
     ]
 
-    response = requests.get(
-        f"{BASE_URL}/events",
-        headers=HEADERS,
-        params=params,
-        timeout=20,
-    )
+    data = api_get("/events", params=params)
 
-    response.raise_for_status()
-
-    return response.json().get("asset_events", [])
+    return data.get("asset_events", [])
 
 
-def get_account_events(address):
+def get_account_mints(address):
     if not address:
         return []
 
@@ -68,33 +95,26 @@ def get_account_events(address):
         ("limit", 200),
     ]
 
-    response = requests.get(
-        f"{BASE_URL}/events/accounts/{address}",
-        headers=HEADERS,
+    data = api_get(
+        f"/events/accounts/{address}",
         params=params,
-        timeout=20,
     )
 
-    if response.status_code != 200:
-        return []
-
-    return response.json().get("asset_events", [])
+    return data.get("asset_events", [])
 
 
 def get_collection(slug):
     if not slug:
         return {}
 
-    response = requests.get(
-        f"{BASE_URL}/collections/{slug}",
-        headers=HEADERS,
-        timeout=20,
-    )
+    return api_get(f"/collections/{slug}")
 
-    if response.status_code != 200:
+
+def get_account_profile(address):
+    if not address:
         return {}
 
-    return response.json()
+    return api_get(f"/accounts/{address}")
 
 
 def extract_creator(event):
@@ -104,11 +124,14 @@ def extract_creator(event):
         return maker
 
     if isinstance(maker, dict):
-        return (
+        address = (
             maker.get("address")
             or maker.get("wallet")
             or maker.get("account")
         )
+
+        if address:
+            return address
 
     from_account = event.get("from")
 
@@ -116,22 +139,119 @@ def extract_creator(event):
         return from_account
 
     if isinstance(from_account, dict):
-        return from_account.get("address")
+        address = from_account.get("address")
+
+        if address:
+            return address
 
     return None
 
 
-def score_creator(mint_count, collection):
+def parse_event_timestamp(event):
+    value = event.get("event_timestamp")
+
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(
+                value,
+                tz=timezone.utc,
+            )
+        except (ValueError, OSError):
+            return None
+
+    if isinstance(value, str):
+        try:
+            if value.isdigit():
+                return datetime.fromtimestamp(
+                    int(value),
+                    tz=timezone.utc,
+                )
+        except (ValueError, OSError):
+            pass
+
+        try:
+            value = value.replace("Z", "+00:00")
+
+            parsed = datetime.fromisoformat(value)
+
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(
+                    tzinfo=timezone.utc
+                )
+
+            return parsed.astimezone(timezone.utc)
+
+        except ValueError:
+            return None
+
+    return None
+
+
+def extract_instagram(profile):
+    if not profile:
+        return None
+
+    for field in [
+        "instagram_username",
+        "instagram",
+    ]:
+        value = profile.get(field)
+
+        if isinstance(value, str) and value.strip():
+            return value.replace("@", "").strip()
+
+    socials = profile.get("socials")
+
+    if isinstance(socials, dict):
+        value = socials.get("instagram")
+
+        if isinstance(value, str) and value.strip():
+            return value.replace("@", "").strip()
+
+    social_media = profile.get("social_media")
+
+    if isinstance(social_media, dict):
+        value = social_media.get("instagram")
+
+        if isinstance(value, str) and value.strip():
+            return value.replace("@", "").strip()
+
+    return None
+
+
+def extract_username(profile):
+    if not profile:
+        return None
+
+    username = profile.get("username")
+
+    if isinstance(username, str) and username.strip():
+        return username.strip()
+
+    return None
+
+
+def score_creator(mint_count, creator_age_days, collection):
     score = 50
 
     if 1 <= mint_count <= 5:
-        score += 30
-    elif mint_count <= 10:
         score += 25
-    elif mint_count <= 20:
+    elif mint_count <= 10:
         score += 20
-    else:
-        score -= 40
+    elif mint_count <= 20:
+        score += 15
+
+    if creator_age_days <= 7:
+        score += 20
+    elif creator_age_days <= 30:
+        score += 15
+    elif creator_age_days <= 60:
+        score += 10
+    elif creator_age_days <= 90:
+        score += 5
 
     stats = collection.get("stats", {}) or {}
 
@@ -186,34 +306,71 @@ def process_event(event):
     if not creator:
         return
 
-    creator_events = get_account_events(creator)
+    mint_events = get_account_mints(creator)
 
-    mint_count = len(
-        [
-            event
-            for event in creator_events
-            if event.get("event_type") == "mint"
-        ]
+    mint_count = len(mint_events)
+
+    # Ð¢Ð¾Ð»ÑÐºÐ¾ Ð°Ð²ÑÐ¾ÑÑ Ñ 1-20 Ð½Ð°Ð¹Ð´ÐµÐ½Ð½ÑÐ¼Ð¸ mint
+    if mint_count < 1 or mint_count > MAX_MINTS:
+        return
+
+    mint_dates = []
+
+    for mint_event in mint_events:
+        mint_date = parse_event_timestamp(mint_event)
+
+        if mint_date:
+            mint_dates.append(mint_date)
+
+    # ÐÑÐ»Ð¸ Ð´Ð°ÑÑ Ð¿ÐµÑÐ²Ð¾Ð¹ ÑÐ°Ð±Ð¾ÑÑ Ð¿ÑÐ¾Ð²ÐµÑÐ¸ÑÑ Ð½ÐµÐ»ÑÐ·Ñ,
+    # Ð°Ð²ÑÐ¾ÑÐ° Ð½Ðµ Ð¾ÑÐ¿ÑÐ°Ð²Ð»ÑÐµÐ¼
+    if not mint_dates:
+        return
+
+    first_mint = min(mint_dates)
+
+    now = datetime.now(timezone.utc)
+
+    cutoff = now - timedelta(
+        days=MAX_CREATOR_AGE_DAYS
     )
 
-    if mint_count < 1 or mint_count > 20:
+    # ÐÐµÑÐ²Ð°Ñ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ° Ð´Ð¾Ð»Ð¶Ð½Ð° Ð±ÑÑÑ
+    # Ð½Ðµ ÑÑÐ°ÑÑÐµ 90 Ð´Ð½ÐµÐ¹
+    if first_mint < cutoff:
         return
+
+    creator_age_days = max(
+        0,
+        (now - first_mint).days,
+    )
 
     collection = get_collection(collection_slug)
 
     score = score_creator(
         mint_count,
+        creator_age_days,
         collection,
     )
 
     if score < MIN_SCORE:
         return
 
+    profile = get_account_profile(creator)
+
+    username = extract_username(profile)
+    instagram = extract_instagram(profile)
+
     collection_name = (
         collection.get("name")
         or collection_slug
         or "Untitled"
     )
+
+    # ÐÐ°ÑÐ¸ÑÐ° Telegram HTML Ð¾Ñ ÑÐ¿ÐµÑÐ¸Ð°Ð»ÑÐ½ÑÑ ÑÐ¸Ð¼Ð²Ð¾Ð»Ð¾Ð²
+    safe_name = html.escape(str(name))
+    safe_collection = html.escape(str(collection_name))
+    safe_creator = html.escape(str(creator))
 
     nft_url = (
         f"https://opensea.io/assets/"
@@ -222,30 +379,66 @@ def process_event(event):
 
     creator_url = f"https://opensea.io/{creator}"
 
-    if score >= 90:
-        badge = "HOT"
-    elif score >= 80:
-        badge = "STRONG"
+    first_mint_text = first_mint.strftime(
+        "%Y-%m-%d"
+    )
+
+    if instagram:
+        instagram = instagram.strip()
+
+        instagram_url = (
+            f"https://instagram.com/{instagram}"
+        )
+
+        safe_instagram = html.escape(instagram)
+
+        instagram_line = (
+            f'ð¸ Instagram: '
+            f'<a href="{instagram_url}">'
+            f'@{safe_instagram}</a>'
+        )
     else:
-        badge = "NEW"
+        instagram_line = "ð¸ Instagram: Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½"
+
+    if username:
+        username_line = (
+            "ð¤ OpenSea: "
+            + html.escape(str(username))
+        )
+    else:
+        username_line = "ð¤ OpenSea: Ð¸Ð¼Ñ Ð½Ðµ ÑÐºÐ°Ð·Ð°Ð½Ð¾"
+
+    if score >= 90:
+        badge = "ð¥ð¥"
+    elif score >= 80:
+        badge = "ð¥"
+    else:
+        badge = "â­"
 
     message = f"""
-<b>{badge} - NEW CREATOR - {score}/100</b>
+{badge} <b>ÐÐÐÐ«Ð Ð¥Ð£ÐÐÐÐÐÐ â {score}/100</b>
 
-<b>{name}</b>
-Collection: {collection_name}
+ð¨ <b>{safe_name}</b>
+ð {safe_collection}
 
-Creator:
-<code>{creator}</code>
+{username_line}
 
-Mint events found: <b>{mint_count}</b>
-Event: <b>{event.get("event_type")}</b>
+ð¼ <b>ÐÐ¾ÑÐµÐ»ÐµÐº:</b>
+<code>{safe_creator}</code>
 
-<a href="{nft_url}">Open NFT on OpenSea</a>
-<a href="{creator_url}">Open creator profile</a>
+{instagram_line}
 
-<i>Score estimates how small/new the creator appears.
-It is not a price forecast.</i>
+ð¼ ÐÐ°Ð¹Ð´ÐµÐ½Ð¾ mint-ÑÐ°Ð±Ð¾Ñ: <b>{mint_count}</b>
+ð ÐÐµÑÐ²Ð°Ñ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ°: <b>{first_mint_text}</b>
+â³ ÐÐ¾Ð·ÑÐ°ÑÑ Ð°Ð²ÑÐ¾ÑÐ°: <b>{creator_age_days} Ð´Ð½ÐµÐ¹</b>
+
+ð Ð¡Ð¾Ð±ÑÑÐ¸Ðµ: <b>{html.escape(str(event.get("event_type")))}</b>
+
+ð <a href="{nft_url}">ÐÑÐºÑÑÑÑ ÑÐ²ÐµÐ¶ÑÑ ÑÐ°Ð±Ð¾ÑÑ</a>
+ð¤ <a href="{creator_url}">ÐÑÐ¾ÑÐ¸Ð»Ñ Ð°Ð²ÑÐ¾ÑÐ° OpenSea</a>
+
+<i>Ð¤Ð¸Ð»ÑÑÑ: 1-20 Ð½Ð°Ð¹Ð´ÐµÐ½Ð½ÑÑ mint,
+Ð¿ÐµÑÐ²Ð°Ñ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ° Ð½Ðµ ÑÑÐ°ÑÑÐµ 90 Ð´Ð½ÐµÐ¹.</i>
 """
 
     send_telegram(message)
@@ -265,7 +458,8 @@ def check_configuration():
 
     if missing:
         raise RuntimeError(
-            "Missing variables: " + ", ".join(missing)
+            "Missing variables: "
+            + ", ".join(missing)
         )
 
 
@@ -275,9 +469,12 @@ def main():
     print("OpenSea Fresh Art Monitor started")
 
     send_telegram(
-        "<b>OpenSea Fresh Art Monitor started</b>\n\n"
-        "Searching for fresh works from creators "
-        "with roughly 1-20 mint events."
+        "â <b>OpenSea Fresh Art Monitor Ð·Ð°Ð¿ÑÑÐµÐ½</b>\n\n"
+        "ÐÑÑ ÑÐ²ÐµÐ¶Ð¸Ñ ÑÑÐ´Ð¾Ð¶Ð½Ð¸ÐºÐ¾Ð²:\n"
+        "â¢ 1-20 Ð½Ð°Ð¹Ð´ÐµÐ½Ð½ÑÑ mint-ÑÐ°Ð±Ð¾Ñ\n"
+        "â¢ Ð¿ÐµÑÐ²Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ° Ð½Ðµ ÑÑÐ°ÑÑÐµ 90 Ð´Ð½ÐµÐ¹\n"
+        "â¢ ÐºÐ¾ÑÐµÐ»ÐµÐº Ð°Ð²ÑÐ¾ÑÐ°\n"
+        "â¢ Instagram, ÐµÑÐ»Ð¸ ÑÐºÐ°Ð·Ð°Ð½"
     )
 
     while True:
