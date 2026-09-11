@@ -92,7 +92,7 @@ def get_account_mints(address):
 
     params = [
         ("event_type", "mint"),
-        ("limit", 200),
+        ("limit", 21),
     ]
 
     data = api_get(
