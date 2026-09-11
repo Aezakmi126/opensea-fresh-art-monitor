@@ -449,7 +449,7 @@ def process_event(event):
 <i>Фильтр: 1–20 mint-событий, возраст автора не старше 90 дней.</i>
 """
 
-    send_telegram(message
+    send_telegram(message)
 
 
 def check_configuration():
