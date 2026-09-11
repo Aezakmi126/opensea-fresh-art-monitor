@@ -262,8 +262,8 @@ def extract_username(profile):
     return None
 
 
-def score_creator(mint_count, creator_age_days, collection):
-    score = 50
+def score_cror(mint_count, creator_age_days, collection):
+    score = 0
 
     if 1 <= mint_count <= 5:
         score += 25
@@ -396,13 +396,23 @@ def process_event(event):
         collection,
     )
 
-    if score < MIN_SCORE:
-        return
-
-    profile = get_account_profile(creator)
+    
+        
+profile = get_account_profile(creator)
 
     username = extract_username(profile)
     instagram = extract_instagram(profile)
+if username:
+    score += 10
+
+if instagram:
+    score += 15
+
+score = min(score, 100)
+
+if score < MIN_SCORE:
+    return
+
 
     collection_name = (
         collection.get("name")
