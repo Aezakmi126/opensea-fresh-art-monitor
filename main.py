@@ -311,9 +311,9 @@ def process_event(event):
     mint_count = len(mint_events)
 
     # Ð¢Ð¾Ð»ÑÐºÐ¾ Ð°Ð²ÑÐ¾ÑÑ Ñ 1-20 Ð½Ð°Ð¹Ð´ÐµÐ½Ð½ÑÐ¼Ð¸ mint
-    if mint_count < 1 or mint_count > MAX_MINTS:
+     if mint_count < 1 or mint_count > MAX_MINTS:
     print("SKIP: mint_count =", mint_count)
-    return
+            return
 
     mint_dates = []
 
