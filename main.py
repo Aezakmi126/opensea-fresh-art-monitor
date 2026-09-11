@@ -402,55 +402,54 @@ def process_event(event):
         safe_instagram = html.escape(instagram)
 
         instagram_line = (
-            f'ð¸ Instagram: '
+            f'📷 Instagram: '
             f'<a href="{instagram_url}">'
             f'@{safe_instagram}</a>'
         )
     else:
-        instagram_line = "ð¸ Instagram: Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½"
+        instagram_line = "📷 Instagram: не найден"
 
     if username:
         username_line = (
-            "ð¤ OpenSea: "
+            "🌊 OpenSea: "
             + html.escape(str(username))
         )
     else:
-        username_line = "ð¤ OpenSea: Ð¸Ð¼Ñ Ð½Ðµ ÑÐºÐ°Ð·Ð°Ð½Ð¾"
+        username_line = "🌊 OpenSea: имя не найдено"
 
     if score >= 90:
-        badge = "ð¥ð¥"
+        badge = "🔥"
     elif score >= 80:
-        badge = "ð¥"
+        badge = "⭐"
     else:
-        badge = "â­"
+        badge = "🆕"
 
     message = f"""
-{badge} <b>ÐÐÐÐ«Ð Ð¥Ð£ÐÐÐÐÐÐ â {score}/100</b>
+{badge} <b>Новый NFT-автор — рейтинг {score}/100</b>
 
-ð¨ <b>{safe_name}</b>
-ð {safe_collection}
+🎨 <b>{safe_name}</b>
+📁 {safe_collection}
 
 {username_line}
 
-ð¼ <b>ÐÐ¾ÑÐµÐ»ÐµÐº:</b>
+👛 <b>Кошелёк:</b>
 <code>{safe_creator}</code>
 
 {instagram_line}
 
-ð¼ ÐÐ°Ð¹Ð´ÐµÐ½Ð¾ mint-ÑÐ°Ð±Ð¾Ñ: <b>{mint_count}</b>
-ð ÐÐµÑÐ²Ð°Ñ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ°: <b>{first_mint_text}</b>
-â³ ÐÐ¾Ð·ÑÐ°ÑÑ Ð°Ð²ÑÐ¾ÑÐ°: <b>{creator_age_days} Ð´Ð½ÐµÐ¹</b>
+🖼 <b>Количество mint-событий:</b> {mint_count}
+📅 <b>Первый mint:</b> {first_mint_text}
+⏳ <b>Возраст автора:</b> {creator_age_days} дней
 
-ð Ð¡Ð¾Ð±ÑÑÐ¸Ðµ: <b>{html.escape(str(event.get("event_type")))}</b>
+🔄 <b>Событие:</b> {html.escape(str(event.get("event_type")))}
 
-ð <a href="{nft_url}">ÐÑÐºÑÑÑÑ ÑÐ²ÐµÐ¶ÑÑ ÑÐ°Ð±Ð¾ÑÑ</a>
-ð¤ <a href="{creator_url}">ÐÑÐ¾ÑÐ¸Ð»Ñ Ð°Ð²ÑÐ¾ÑÐ° OpenSea</a>
+🔗 <a href="{nft_url}">Посмотреть работу на OpenSea</a>
+👤 <a href="{creator_url}">Открыть автора на OpenSea</a>
 
-<i>Ð¤Ð¸Ð»ÑÑÑ: 1-20 Ð½Ð°Ð¹Ð´ÐµÐ½Ð½ÑÑ mint,
-Ð¿ÐµÑÐ²Ð°Ñ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ° Ð½Ðµ ÑÑÐ°ÑÑÐµ 90 Ð´Ð½ÐµÐ¹.</i>
+<i>Фильтр: 1–20 mint-событий, возраст автора не старше 90 дней.</i>
 """
 
-    send_telegram(message)
+    send_telegram(message
 
 
 def check_configuration():
