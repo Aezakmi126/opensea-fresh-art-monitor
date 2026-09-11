@@ -300,7 +300,7 @@ def process_event(event):
         return
 
     seen.add(unique_id)
-
+    print("DEBUG EVENT:", event)
     creator = extract_creator(event)
     print (" DEBUG CREATOR :", creator)
     if not creator:
