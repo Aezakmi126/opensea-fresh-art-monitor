@@ -14,6 +14,30 @@ MIN_SCORE = int(os.getenv("MIN_SCORE", "70"))
 MAX_CREATOR_AGE_DAYS = 90
 MAX_MINTS = 20
 
+# Исключаем служебные NFT, которые не являются работами художников
+SERVICE_NFT_KEYWORDS = [
+    "uniswap",
+    "positions nft",
+    "position nft",
+    "liquidity position",
+    "liquidity",
+    "lp position",
+    "staking",
+    "staked",
+    "aave",
+    "compound",
+    "curve",
+    "balancer",
+    "pancakeswap",
+    "sushiswap",
+    "ens",
+    "ethereum name service",
+    "name wrapper",
+    "bridge",
+    "receipt",
+    "vault",
+]
+
 BASE_URL = "https://api.opensea.io/api/v2"
 
 HEADERS = {
@@ -302,6 +326,13 @@ def process_event(event):
     
     name = nft.get("name") or f"NFT #{token_id}"
     chain = nft.get("chain") or "ethereum"
+
+    # Отбрасываем служебные DeFi/NFT по названию и коллекции
+    service_text = f"{name} {collection_slug or ''}".lower()
+
+    if any(keyword in service_text for keyword in SERVICE_NFT_KEYWORDS):
+        print("SKIP: service NFT =", name, "| collection =", collection_slug)
+        return
 
     if not contract or token_id is None:
         return
