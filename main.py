@@ -315,7 +315,7 @@ def score_cror(mint_count, creator_age_days, collection):
 
 
 def process_event(event):
-    nft = event.get("nft") or {}
+    nft = event.get("nft") or ovent.get("asset") or {}
 
     token_id = nft.get("identifier")
     contract = nft.get("contract")
