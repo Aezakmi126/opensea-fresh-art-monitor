@@ -339,7 +339,7 @@ def process_event(event):
         return
 
     if not contract or token_id is None:
-        print("SKIP: missing contract/token_id", contract, token_id)
+        print("MISSING NFT DATA:", event)
         return
 
     unique_id = f"{chain}:{contract}:{token_id}"
