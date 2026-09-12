@@ -397,7 +397,7 @@ def process_event(event):
     )
 
     collection = get_collection(collection_slug)
-
+    collection_name = collection.get("name") or collection_slug or "Без названия"
     score = score_creator(
         mint_count,
         creator_age_days,
