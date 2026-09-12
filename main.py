@@ -124,8 +124,11 @@ def get_account_mints(address):
         params=params,
     )
 
-    print("ACCOUNT_MINTS:", address, "count =", len(data.get("asset_events", [])))
-    return data.get("asset_events", [])
+    events = data.get("asset_events", [])
+
+    print("ACCOUNT_MINTS:", address, "count =", len(events))
+
+    return events
 
 
 def get_collection(slug):
