@@ -339,28 +339,32 @@ def process_event(event):
         return
 
     if not contract or token_id is None:
+        print("SKIP: missing contract/token_id", contract, token_id)
         return
 
     unique_id = f"{chain}:{contract}:{token_id}"
 
     if unique_id in seen:
+        print("SKIP: already seen =", unique_id)
         return
 
     seen.add(unique_id)
     print("DEBUG EVENT:", event)
+
     creator = extract_creator(event)
-    print (" DEBUG CREATOR :", creator)
+    print("DEBUG CREATOR:", creator)
+
     if not creator:
         return
-
     mint_events = get_account_mints(creator)
-
     mint_count = len(mint_events)
 
     if mint_count < 1 or mint_count > MAX_MINTS:
         print("SKIP: mint_count =", mint_count)
         return
-        print("PASS:mint_count =", mint_count)
+
+    print("PASS: mint_count =", mint_count)
+
     mint_dates = []
 
     for mint_event in mint_events:
@@ -369,10 +373,8 @@ def process_event(event):
         if mint_date:
             mint_dates.append(mint_date)
 
-    # ÐÑÐ»Ð¸ Ð´Ð°ÑÑ Ð¿ÐµÑÐ²Ð¾Ð¹ ÑÐ°Ð±Ð¾ÑÑ Ð¿ÑÐ¾Ð²ÐµÑÐ¸ÑÑ Ð½ÐµÐ»ÑÐ·Ñ,
-    # Ð°Ð²ÑÐ¾ÑÐ° Ð½Ðµ Ð¾ÑÐ¿ÑÐ°Ð²Ð»ÑÐµÐ¼
     if not mint_dates:
-        print ("SKIP: no valid mint dates")
+        print("SKIP: no valid mint dates")
         return
 
     first_mint = min(mint_dates)
