@@ -356,7 +356,7 @@ def process_event(event):
     if mint_count < 1 or mint_count > MAX_MINTS:
         print("SKIP: mint_count =", mint_count)
         return
-
+        print("PASS:mint_count =", mint_count)
     mint_dates = []
 
     for mint_event in mint_events:
@@ -368,6 +368,7 @@ def process_event(event):
     # ÐÑÐ»Ð¸ Ð´Ð°ÑÑ Ð¿ÐµÑÐ²Ð¾Ð¹ ÑÐ°Ð±Ð¾ÑÑ Ð¿ÑÐ¾Ð²ÐµÑÐ¸ÑÑ Ð½ÐµÐ»ÑÐ·Ñ,
     # Ð°Ð²ÑÐ¾ÑÐ° Ð½Ðµ Ð¾ÑÐ¿ÑÐ°Ð²Ð»ÑÐµÐ¼
     if not mint_dates:
+        print ("SKIP: no valid mint dates")
         return
 
     first_mint = min(mint_dates)
