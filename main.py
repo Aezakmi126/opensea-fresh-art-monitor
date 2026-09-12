@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "40"))
 
-MAX_CREATOR_AGE_DAYS = 90
+MAX_CREATOR_AGE_DAYS = 180
 MAX_MINTS = 30
 
 # Исключаем служебные NFT, которые не являются работами художников
@@ -381,6 +381,7 @@ def process_event(event):
     # ÐÐµÑÐ²Ð°Ñ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ð°Ñ ÑÐ°Ð±Ð¾ÑÐ° Ð´Ð¾Ð»Ð¶Ð½Ð° Ð±ÑÑÑ
     # Ð½Ðµ ÑÑÐ°ÑÑÐµ 90 Ð´Ð½ÐµÐ¹
     if first_mint < cutoff:
+        print("SKIP: creator too old | first_mint=",first_mint)
         return
 
     creator_age_days = max(
