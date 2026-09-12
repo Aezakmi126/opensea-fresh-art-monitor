@@ -266,7 +266,7 @@ def extract_username(profile):
     return None
 
 
-def score_cror(mint_count, creator_age_days, collection):
+def score_creator(mint_count, creator_age_days, collection):
     score = 0
 
     if 1 <= mint_count <= 5:
