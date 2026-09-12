@@ -9,7 +9,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))
-MIN_SCORE = int(os.getenv("MIN_SCORE", "50"))
+MIN_SCORE = int(os.getenv("MIN_SCORE", "40"))
 
 MAX_CREATOR_AGE_DAYS = 90
 MAX_MINTS = 30
