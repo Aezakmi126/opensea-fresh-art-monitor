@@ -3,6 +3,7 @@ import time
 import html
 import requests
 from datetime import datetime, timezone, timedelta
+from collections import Counter
 
 OPENSEA_API_KEY = os.getenv("OPENSEA_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -19,6 +20,7 @@ MAX_COLLECTION_MINTS = int(os.getenv("MAX_COLLECTION_MINTS", "30"))
 RECENT_LISTING_DAYS = int(os.getenv("RECENT_LISTING_DAYS", "30"))
 DISCOVERY_WINDOW_SECONDS = int(os.getenv("DISCOVERY_WINDOW_SECONDS", "300"))
 REQUIRE_RECENT_LISTING = os.getenv("REQUIRE_RECENT_LISTING", "1") == "1"
+REQUIRE_INSTAGRAM = os.getenv("REQUIRE_INSTAGRAM", "1") == "1"
 
 BASE_URL = "https://api.opensea.io/api/v2"
 
@@ -249,6 +251,32 @@ def extract_mint_recipient(event):
     return None
 
 
+
+def is_mint_event(event):
+    """OpenSea может отдавать mint как event_type=mint или как transfer + transfer_type=mint."""
+    event_type = str(event.get("event_type") or "").lower()
+    transfer_type = str(event.get("transfer_type") or "").lower()
+    return event_type == "mint" or (event_type == "transfer" and transfer_type == "mint")
+
+
+def print_discovery_diagnostics(events):
+    """Короткая диагностика каждого цикла: где теряются кандидаты."""
+    event_types = Counter(str(e.get("event_type") or "missing") for e in events)
+    transfer_types = Counter(str(e.get("transfer_type") or "missing") for e in events)
+    mint_like = sum(1 for e in events if is_mint_event(e))
+    with_nft = sum(1 for e in events if (e.get("nft") or e.get("asset")))
+    with_recipient = sum(1 for e in events if extract_mint_recipient(e))
+
+    print(
+        "DIAG DISCOVERY:",
+        "events =", len(events),
+        "| mint_like =", mint_like,
+        "| with_nft =", with_nft,
+        "| with_recipient =", with_recipient,
+        "| event_types =", dict(event_types),
+        "| transfer_types =", dict(transfer_types),
+    )
+
 def parse_event_timestamp(event):
     value = event.get("event_timestamp")
 
@@ -371,7 +399,8 @@ def score_creator(mint_count, creator_age_days, collection_mint_count, profile, 
 
 
 def process_event(event):
-    if event.get("event_type") != "mint":
+    if not is_mint_event(event):
+        print("SKIP: not a mint-like event | event_type =", event.get("event_type"), "| transfer_type =", event.get("transfer_type"))
         return
 
     nft = event.get("nft") or event.get("asset") or {}
@@ -444,6 +473,16 @@ def process_event(event):
         )
         return
 
+    # Instagram обязателен по нашей задаче. Проверяем его ДО более дорогих
+    # проверок коллекции и листингов, чтобы не тратить запросы на авторов без Instagram.
+    profile = get_account_profile(creator)
+    username = extract_username(profile)
+    instagram = extract_instagram(profile)
+
+    if REQUIRE_INSTAGRAM and not instagram:
+        print("SKIP: no Instagram in OpenSea profile")
+        return
+
     # 2) Проверка самой коллекции. Если у коллекции уже десятки/сотни
     # mint-событий, это не тот маленький новый автор, которого мы ищем.
     collection_mints, collection_has_more = get_collection_mints(collection_slug)
@@ -488,10 +527,6 @@ def process_event(event):
         return
 
     stats = get_collection_stats(collection_slug)
-    profile = get_account_profile(creator)
-
-    username = extract_username(profile)
-    instagram = extract_instagram(profile)
 
     score = score_creator(
         mint_count=mint_count,
@@ -567,7 +602,7 @@ def process_event(event):
 🔗 <a href="{nft_url}">Посмотреть работу на OpenSea</a>
 👤 <a href="{creator_url}">Открыть автора на OpenSea</a>
 
-<i>Строгий фильтр: ≤{MAX_MINTS} mint у кошелька, ≤{MAX_COLLECTION_MINTS} mint в коллекции, первый mint ≤{MAX_CREATOR_AGE_DAYS} дней назад и свежий листинг автора.</i>
+<i>Строгий фильтр: Instagram обязателен, ≤{MAX_MINTS} mint у кошелька, ≤{MAX_COLLECTION_MINTS} mint в коллекции, первый mint ≤{MAX_CREATOR_AGE_DAYS} дней назад и свежий листинг автора.</i>
 """
 
     send_telegram(message)
@@ -599,6 +634,7 @@ def main():
         f"• не больше {MAX_COLLECTION_MINTS} mint в коллекции\n"
         f"• первый mint не старше {MAX_CREATOR_AGE_DAYS} дней\n"
         f"• нужен свежий листинг за последние {RECENT_LISTING_DAYS} дней\n"
+        f"• Instagram обязателен: {'да' if REQUIRE_INSTAGRAM else 'нет'}\n"
         "• массовые/служебные NFT отсекаются"
     )
 
@@ -611,6 +647,7 @@ def main():
                 "fresh mint events:",
                 len(events),
             )
+            print_discovery_diagnostics(events)
 
             for event in events:
                 try:
