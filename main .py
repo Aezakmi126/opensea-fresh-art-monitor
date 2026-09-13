@@ -130,37 +130,53 @@ def get_recent_mint_events():
 
 
 def get_account_mints(address, chain):
-    """Получаем до MAX_MINTS + 1 mint-событий кошелька.
+    """Получаем mint-события кошелька, пока не станет ясно, что их > MAX_MINTS.
 
-    Если вернулось больше MAX_MINTS или OpenSea дал next-cursor,
-    кошелёк уже слишком активный и новым автором не считается.
-
-    ВАЖНО: передаём chain. В старом коде chain не передавался, поэтому
-    для Base/Polygon фактически проверялся Ethereum — это могло давать
-    ложные результаты.
+    Важно: OpenSea иногда возвращает next-cursor даже когда на первой странице
+    всего 1–несколько событий. Поэтому наличие `next` само по себе НЕ означает,
+    что у кошелька больше 20 mint. Мы реально пролистываем страницы, пока:
+      • не соберём MAX_MINTS + 1 событий (тогда автор слишком активный), или
+      • не закончится пагинация.
     """
     if not address:
         return [], False
 
-    limit = min(MAX_MINTS + 1, 200)
-    params = [
-        ("event_type", "mint"),
-        ("chain", chain),
-        ("limit", limit),
-    ]
+    target = MAX_MINTS + 1
+    events = []
+    cursor = None
+    pages = 0
 
-    data = api_get(f"/events/accounts/{address}", params=params)
-    events = data.get("asset_events", [])
-    has_more = bool(data.get("next"))
+    while len(events) < target and pages < 20:
+        page_limit = min(target - len(events), 200)
+        params = [
+            ("event_type", "mint"),
+            ("chain", chain),
+            ("limit", page_limit),
+        ]
+        if cursor:
+            params.append(("next", cursor))
+
+        data = api_get(f"/events/accounts/{address}", params=params)
+        batch = data.get("asset_events", []) or []
+        events.extend(batch)
+        cursor = data.get("next")
+        pages += 1
+
+        if not cursor or not batch:
+            break
+
+    too_many = len(events) > MAX_MINTS
 
     print(
         "ACCOUNT_MINTS:", address,
         "chain =", chain,
         "count =", len(events),
-        "has_more =", has_more,
+        "has_more =", bool(cursor),
+        "too_many =", too_many,
+        "pages =", pages,
     )
 
-    return events, has_more
+    return events[:target], too_many
 
 
 def get_recent_account_listings(address, chain):
