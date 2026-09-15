@@ -20,9 +20,7 @@ MAX_CREATOR_AGE_DAYS = int(os.getenv("MAX_CREATOR_AGE_DAYS", "30"))
 MAX_MINTS = int(os.getenv("MAX_MINTS", "20"))
 MAX_COLLECTION_MINTS = int(os.getenv("MAX_COLLECTION_MINTS", "30"))
 RECENT_LISTING_DAYS = int(os.getenv("RECENT_LISTING_DAYS", "30"))
-DISCOVERY_WINDOW_SECONDS = int(os.getenv("DISCOVERY_WINDOW_SECONDS", "1800"))
-DISCOVERY_PAGES = int(os.getenv("DISCOVERY_PAGES", "3"))
-DISCOVERY_EVENTS_PER_PAGE = int(os.getenv("DISCOVERY_EVENTS_PER_PAGE", "100"))
+DISCOVERY_WINDOW_SECONDS = int(os.getenv("DISCOVERY_WINDOW_SECONDS", "300"))
 REQUIRE_RECENT_LISTING = os.getenv("REQUIRE_RECENT_LISTING", "1") == "1"
 REQUIRE_INSTAGRAM = os.getenv("REQUIRE_INSTAGRAM", "1") == "1"
 
@@ -116,67 +114,22 @@ def api_get(endpoint, params=None):
         return {}
 
 
-def _event_discovery_key(event):
-    nft = event.get("nft") or event.get("asset") or {}
-    chain = nft.get("chain") or event.get("chain") or ""
-    contract = nft.get("contract") or ""
-    token_id = nft.get("identifier")
-    tx = event.get("transaction") or event.get("transaction_hash") or ""
-    recipient = extract_mint_recipient(event) or ""
-    return f"{chain}:{contract}:{token_id}:{tx}:{recipient}"
-
-
 def get_recent_mint_events():
-    """Берём несколько страниц СВЕЖИХ mint-событий, а не только последние 100.
+    """Ищем кандидатов ТОЛЬКО по свежим mint-событиям.
 
-    Это расширяет выборку и повышает шанс увидеть маленькую новую коллекцию,
-    вместо того чтобы постоянно крутиться вокруг самых массовых mint-потоков.
+    Listing больше не используется для определения автора: maker листинга
+    может быть обычным коллекционером/перепродавцом.
     """
     now = int(datetime.now(timezone.utc).timestamp())
-    after = now - DISCOVERY_WINDOW_SECONDS
 
-    all_events = []
-    seen = set()
-    cursor = None
+    params = [
+        ("after", now - DISCOVERY_WINDOW_SECONDS),
+        ("event_type", "mint"),
+        ("limit", 100),
+    ]
 
-    pages = max(1, min(DISCOVERY_PAGES, 5))
-    per_page = max(20, min(DISCOVERY_EVENTS_PER_PAGE, 100))
-
-    for page in range(pages):
-        params = [
-            ("after", after),
-            ("event_type", "mint"),
-            ("limit", per_page),
-        ]
-        if cursor:
-            params.append(("next", cursor))
-
-        data = api_get("/events", params=params)
-        events = data.get("asset_events", []) or []
-
-        added = 0
-        for event in events:
-            key = _event_discovery_key(event)
-            if key in seen:
-                continue
-            seen.add(key)
-            all_events.append(event)
-            added += 1
-
-        print(
-            "DISCOVERY PAGE:",
-            page + 1,
-            "events =", len(events),
-            "new =", added,
-            "total =", len(all_events),
-        )
-
-        next_cursor = data.get("next")
-        if not next_cursor or not events or added == 0:
-            break
-        cursor = next_cursor
-
-    return all_events
+    data = api_get("/events", params=params)
+    return data.get("asset_events", [])
 
 
 def get_account_mints(address, chain):
@@ -270,37 +223,6 @@ def get_account_profile(address):
     if not address:
         return {}
     return api_get(f"/accounts/{address}")
-
-
-
-def extract_collection_creator(collection):
-    """Пытаемся получить владельца/создателя коллекции из метаданных OpenSea.
-
-    Для поиска художника это предпочтительнее, чем автоматически считать
-    получателя mint автором: получатель часто оказывается коллекционером.
-    """
-    if not isinstance(collection, dict):
-        return None
-
-    preferred_keys = (
-        "creator", "creator_address", "owner", "owner_address",
-        "payout_address", "payment_address"
-    )
-
-    for key in preferred_keys:
-        address = normalize_address(collection.get(key))
-        if address:
-            return address
-
-    # Иногда адрес находится во вложенном объекте.
-    for key in preferred_keys:
-        value = collection.get(key)
-        if isinstance(value, dict):
-            address = normalize_address(value)
-            if address:
-                return address
-
-    return None
 
 
 def normalize_address(value):
@@ -487,6 +409,76 @@ def find_instagram_on_external_pages(*sources):
             print('INSTAGRAM FALLBACK ERROR:', url, repr(error))
     return None
 
+
+
+def _norm_identity(value):
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+def find_instagram_via_web_search(username=None, collection_slug=None, collection_name=None):
+    """Conservative last-resort public-web lookup.
+
+    Uses DuckDuckGo's HTML results and accepts an Instagram handle only when
+    the handle itself strongly matches the OpenSea username or collection
+    identity. This intentionally prefers false negatives over wrong accounts.
+    """
+    identities = []
+    for value in (username, collection_slug, collection_name):
+        norm = _norm_identity(value)
+        if len(norm) >= 4 and norm not in identities:
+            identities.append(norm)
+
+    if not identities:
+        return None
+
+    terms = [x for x in (username, collection_slug, collection_name) if isinstance(x, str) and x.strip()]
+    queries = []
+    for term in terms[:3]:
+        queries.append(f'site:instagram.com "{term.strip()}"')
+
+    for query in queries:
+        try:
+            response = requests.get(
+                'https://html.duckduckgo.com/html/',
+                params={'q': query},
+                timeout=10,
+                headers={'User-Agent': 'Mozilla/5.0'},
+            )
+            if response.status_code >= 400:
+                continue
+
+            # Results may contain direct Instagram URLs or URL-encoded redirect targets.
+            body = response.text.replace('\\/', '/')
+            try:
+                from urllib.parse import unquote
+                body = unquote(body)
+            except Exception:
+                pass
+
+            handles = re.findall(
+                r'(?:https?://)?(?:www\.)?instagram\.com/([A-Za-z0-9._]{1,30})(?:[/?#&"\'<>]|$)',
+                body,
+                flags=re.IGNORECASE,
+            )
+            for handle in handles:
+                hnorm = _norm_identity(handle)
+                if not hnorm:
+                    continue
+                # Strict identity check: handle and known identity must substantially overlap.
+                if any(
+                    hnorm == ident
+                    or (len(hnorm) >= 5 and hnorm in ident)
+                    or (len(ident) >= 5 and ident in hnorm)
+                    for ident in identities
+                ):
+                    print('INSTAGRAM WEB SEARCH: verified handle =', handle, '| query =', query)
+                    return handle
+        except requests.RequestException as error:
+            print('INSTAGRAM WEB SEARCH ERROR:', repr(error))
+
+    return None
+
 def extract_username(profile):
     if not profile:
         return None
@@ -561,12 +553,7 @@ def score_creator(mint_count, creator_age_days, collection_mint_count, profile, 
 
 def process_event(event):
     if not is_mint_event(event):
-        print(
-            "SKIP: not a mint-like event | event_type =",
-            event.get("event_type"),
-            "| transfer_type =",
-            event.get("transfer_type"),
-        )
+        print("SKIP: not a mint-like event | event_type =", event.get("event_type"), "| transfer_type =", event.get("transfer_type"))
         return
 
     nft = event.get("nft") or event.get("asset") or {}
@@ -594,70 +581,28 @@ def process_event(event):
         return
     seen_nfts.add(unique_nft_id)
 
-    # 1) Сначала проверяем КОЛЛЕКЦИЮ.
-    # Массовые коллекции отбрасываем до дорогих запросов истории кошелька.
-    collection = get_collection(collection_slug)
-    collection_name = collection.get("name") or collection_slug or "Без названия"
-
-    if contains_service_keyword(name, collection_slug, collection_name):
-        print("SKIP: service keyword after collection lookup")
-        return
-
-    collection_mints, collection_has_more = get_collection_mints(collection_slug)
-    collection_mint_count = len(collection_mints)
-
-    if collection_has_more or collection_mint_count > MAX_COLLECTION_MINTS:
-        print(
-            "SKIP: collection too large |",
-            collection_slug,
-            "mint_count =", collection_mint_count,
-            "has_more =", collection_has_more,
-        )
-        return
-
-    # 2) Кандидат на автора.
-    # Если OpenSea сообщает owner/creator коллекции — используем его.
-    # Получатель mint остаётся fallback, когда owner/creator отсутствует.
-    collection_creator = extract_collection_creator(collection)
-    mint_recipient = extract_mint_recipient(event)
-
-    if collection_creator:
-        creator = collection_creator
-        creator_source = "collection_owner"
-    else:
-        creator = mint_recipient
-        creator_source = "mint_recipient"
-
-    print(
-        "CANDIDATE WALLET:",
-        creator,
-        "| source =", creator_source,
-        "| chain =", chain,
-        "| collection =", collection_slug,
-        "| collection_mints =", collection_mint_count,
-    )
+    creator = extract_mint_recipient(event)
+    print("CANDIDATE WALLET:", creator, "| chain =", chain)
 
     if not creator:
-        print("SKIP: no creator/owner and no mint recipient")
+        print("SKIP: no mint recipient")
         return
 
     candidate_key = f"{chain}:{creator}"
     if candidate_key in seen_candidates:
         print("SKIP: candidate already checked =", candidate_key)
         return
-
     seen_candidates.add(candidate_key)
-    stats["checked"] = stats.get("checked", 0) + 1
+    stats["checked"] = stats.get("checked", 0) +1
 
-    # 3) Проверяем историю mint выбранного автора.
+    # 1) Проверка истории mint самого кошелька.
     mint_events, account_has_more = get_account_mints(creator, chain)
     mint_count = len(mint_events)
 
     if account_has_more or mint_count < 1 or mint_count > MAX_MINTS:
         stats["too_many_mints"] = stats.get("too_many_mints", 0) + 1
         print(
-            "SKIP: creator mint history outside target |",
-            "source =", creator_source,
+            "SKIP: creator has too many mints |",
             "count =", mint_count,
             "has_more =", account_has_more,
         )
@@ -679,17 +624,18 @@ def process_event(event):
     if creator_age_days > MAX_CREATOR_AGE_DAYS:
         stats["too_old"] = stats.get("too_old", 0) + 1
         print(
-            "SKIP: creator too old | age_days =",
-            creator_age_days,
-            "first_mint =",
-            first_mint,
+            "SKIP: creator too old | age_days =", creator_age_days,
+            "first_mint =", first_mint,
         )
         return
 
-    # 4) Instagram: ищем в профиле, коллекции и внешних ссылках.
+    # Instagram обязателен, но ищем его не только в стандартном поле профиля.
     profile = get_account_profile(creator)
     username = extract_username(profile)
     instagram = extract_instagram_deep(profile)
+
+    # Для fallback нужен объект коллекции: там часто лежит сайт/Linktree/соцсети.
+    collection = get_collection(collection_slug)
 
     if not instagram:
         instagram = extract_instagram_deep(collection)
@@ -697,20 +643,50 @@ def process_event(event):
     if not instagram:
         instagram = find_instagram_on_external_pages(profile, collection)
 
+    # Last resort: conservative public-web search. We only accept a result
+    # when the Instagram handle strongly matches the OpenSea/collection identity.
+    if not instagram:
+        collection_name_for_search = None
+        if isinstance(collection, dict):
+            collection_name_for_search = collection.get("name") or collection.get("collection")
+        instagram = find_instagram_via_web_search(
+            username=username,
+            collection_slug=collection_slug,
+            collection_name=collection_name_for_search,
+        )
+
     if REQUIRE_INSTAGRAM and not instagram:
-        print("SKIP: no Instagram after fallback search")
+        print("SKIP: no Instagram after profile + collection + external + web search")
         return
 
     if instagram:
         print("INSTAGRAM FOUND:", instagram)
 
-    # 5) Новый автор должен реально выставлять работы, а не только получать mint/drop.
+    # 2) Проверка самой коллекции. Если у коллекции уже десятки/сотни
+    # mint-событий, это не тот маленький новый автор, которого мы ищем.
+    collection_mints, collection_has_more = get_collection_mints(collection_slug)
+    collection_mint_count = len(collection_mints)
+
+    if collection_has_more or collection_mint_count > MAX_COLLECTION_MINTS:
+        print(
+            "SKIP: collection too large |",
+            collection_slug,
+            "mint_count =", collection_mint_count,
+            "has_more =", collection_has_more,
+        )
+        return
+
+    # 3) Автор должен не только наминтить NFT, но и реально начать
+    # выставлять их на OpenSea недавно. Это отсекает множество обычных
+    # получателей mint/drop NFT.
     recent_listings = get_recent_account_listings(creator, chain)
 
     if REQUIRE_RECENT_LISTING and not recent_listings:
         print("SKIP: no recent listings by candidate")
         return
 
+    # Если есть листинги, проверим, что среди них есть работа из той же
+    # коллекции. Это ещё один барьер против случайных коллекционеров.
     same_collection_listing = False
     for listing in recent_listings:
         listing_nft = listing.get("nft") or listing.get("asset") or {}
@@ -720,6 +696,12 @@ def process_event(event):
 
     if REQUIRE_RECENT_LISTING and collection_slug and not same_collection_listing:
         print("SKIP: candidate has listings, but not from this collection")
+        return
+
+    collection_name = collection.get("name") or collection_slug or "Без названия"
+
+    if contains_service_keyword(name, collection_slug, collection_name):
+        print("SKIP: service keyword after collection lookup")
         return
 
     collection_stats = get_collection_stats(collection_slug)
@@ -733,9 +715,7 @@ def process_event(event):
     )
 
     print(
-        "PASS CANDIDATE:",
-        creator,
-        "| source =", creator_source,
+        "PASS CANDIDATE:", creator,
         "| mint_count =", mint_count,
         "| collection_mints =", collection_mint_count,
         "| age_days =", creator_age_days,
@@ -770,29 +750,40 @@ def process_event(event):
     else:
         username_line = "🌊 OpenSea: имя не найдено"
 
-    text_message = f"""
-🆕 <b>Новый художник-кандидат</b>
+    if score >= 90:
+        badge = "🔥"
+    elif score >= 75:
+        badge = "⭐"
+    else:
+        badge = "🆕"
+
+    message = f"""
+{badge} <b>Свежий NFT-автор — рейтинг {score}/100</b>
 
 🎨 <b>{safe_name}</b>
-🗂 <b>Коллекция:</b> {safe_collection}
-👤 <b>Кошелёк:</b>
-<code>{safe_creator}</code>
-
-🔎 <b>Источник автора:</b> {html.escape(creator_source)}
-🧮 <b>Mint у автора:</b> {mint_count}
-🖼 <b>Mint в коллекции:</b> {collection_mint_count}
-⏳ <b>Возраст автора:</b> {creator_age_days} дней
-📅 <b>Первый mint:</b> {first_mint_text}
-📈 <b>Score:</b> {score}/100
+📁 {safe_collection}
 
 {username_line}
+
+👛 <b>Кошелёк:</b>
+<code>{safe_creator}</code>
+
 {instagram_line}
 
-👤 <a href="{creator_url}">Открыть автора на OpenSea</a>
-🖼 <a href="{nft_url}">Открыть NFT</a>
-""".strip()
+🖼 <b>Mint у кошелька:</b> {mint_count}
+📦 <b>Mint в коллекции:</b> {collection_mint_count}
+🏷 <b>Свежих листингов:</b> {len(recent_listings)}
+📅 <b>Первый mint:</b> {first_mint_text}
+⏳ <b>Возраст автора:</b> {creator_age_days} дней
+⛓ <b>Сеть:</b> {html.escape(str(chain))}
 
-    send_telegram(text_message)
+🔗 <a href="{nft_url}">Посмотреть работу на OpenSea</a>
+👤 <a href="{creator_url}">Открыть автора на OpenSea</a>
+
+<i>Строгий фильтр: Instagram обязателен, ≤{MAX_MINTS} mint у кошелька, ≤{MAX_COLLECTION_MINTS} mint в коллекции, первый mint ≤{MAX_CREATOR_AGE_DAYS} дней назад и свежий листинг автора.</i>
+"""
+
+    send_telegram(message)
 
 
 def check_configuration():
@@ -816,9 +807,7 @@ def main():
 
     send_telegram(
         "<b>OpenSea Fresh Artist Monitor запущен — строгий режим</b>\n"
-        f"• несколько страниц свежих mint-событий\n"
-        f"• сначала отсекаются массовые коллекции\n"
-        f"• owner/creator коллекции имеет приоритет над получателем mint\n"
+        f"• только свежие mint-события\n"
         f"• не больше {MAX_MINTS} mint у кошелька\n"
         f"• не больше {MAX_COLLECTION_MINTS} mint в коллекции\n"
         f"• первый mint не старше {MAX_CREATOR_AGE_DAYS} дней\n"
