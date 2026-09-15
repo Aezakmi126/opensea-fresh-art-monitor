@@ -419,9 +419,9 @@ def _norm_identity(value):
 def find_instagram_via_web_search(username=None, collection_slug=None, collection_name=None):
     """Conservative last-resort public-web lookup.
 
-    Uses DuckDuckGo's HTML results and accepts an Instagram handle only when
-    the handle itself strongly matches the OpenSea username or collection
-    identity. This intentionally prefers false negatives over wrong accounts.
+    Tries several public search result endpoints. A timeout/failure of one
+    provider does not stop the lookup. An Instagram handle is accepted only
+    when it strongly matches the OpenSea username or collection identity.
     """
     identities = []
     for value in (username, collection_slug, collection_name):
@@ -432,50 +432,72 @@ def find_instagram_via_web_search(username=None, collection_slug=None, collectio
     if not identities:
         return None
 
-    terms = [x for x in (username, collection_slug, collection_name) if isinstance(x, str) and x.strip()]
-    queries = []
-    for term in terms[:3]:
-        queries.append(f'site:instagram.com "{term.strip()}"')
+    terms = [x.strip() for x in (username, collection_slug, collection_name)
+             if isinstance(x, str) and x.strip()]
+    queries = [f'site:instagram.com "{term}"' for term in terms[:3]]
+
+    # Do not depend on a single search host: Railway can occasionally time out
+    # against html.duckduckgo.com. Each provider is best-effort.
+    providers = [
+        ('ddg-html', 'https://html.duckduckgo.com/html/', 'q'),
+        ('ddg-lite', 'https://lite.duckduckgo.com/lite/', 'q'),
+        ('bing', 'https://www.bing.com/search', 'q'),
+    ]
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
 
     for query in queries:
-        try:
-            response = requests.get(
-                'https://html.duckduckgo.com/html/',
-                params={'q': query},
-                timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0'},
-            )
-            if response.status_code >= 400:
-                continue
-
-            # Results may contain direct Instagram URLs or URL-encoded redirect targets.
-            body = response.text.replace('\\/', '/')
+        for provider_name, url, query_param in providers:
             try:
-                from urllib.parse import unquote
-                body = unquote(body)
-            except Exception:
-                pass
-
-            handles = re.findall(
-                r'(?:https?://)?(?:www\.)?instagram\.com/([A-Za-z0-9._]{1,30})(?:[/?#&"\'<>]|$)',
-                body,
-                flags=re.IGNORECASE,
-            )
-            for handle in handles:
-                hnorm = _norm_identity(handle)
-                if not hnorm:
+                response = requests.get(
+                    url,
+                    params={query_param: query},
+                    timeout=(4, 8),
+                    headers=headers,
+                    allow_redirects=True,
+                )
+                if response.status_code >= 400:
+                    print('INSTAGRAM WEB SEARCH:', provider_name, 'HTTP', response.status_code)
                     continue
-                # Strict identity check: handle and known identity must substantially overlap.
-                if any(
-                    hnorm == ident
-                    or (len(hnorm) >= 5 and hnorm in ident)
-                    or (len(ident) >= 5 and ident in hnorm)
-                    for ident in identities
-                ):
-                    print('INSTAGRAM WEB SEARCH: verified handle =', handle, '| query =', query)
-                    return handle
-        except requests.RequestException as error:
-            print('INSTAGRAM WEB SEARCH ERROR:', repr(error))
+
+                body = response.text.replace('\\/', '/')
+                try:
+                    from urllib.parse import unquote
+                    # Decode twice because search-engine redirect URLs can be nested.
+                    body = unquote(unquote(body))
+                except Exception:
+                    pass
+
+                handles = re.findall(
+                    r"(?:https?://)?(?:www\\.)?instagram\\.com/([A-Za-z0-9._]{1,30})(?:[/?#&\"'<>]|$)",
+                    body,
+                    flags=re.IGNORECASE,
+                )
+
+                # Ignore Instagram routes that are not user handles.
+                ignored = {'p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'tv'}
+                for handle in handles:
+                    if handle.lower() in ignored:
+                        continue
+                    hnorm = _norm_identity(handle)
+                    if not hnorm:
+                        continue
+                    if any(
+                        hnorm == ident
+                        or (len(hnorm) >= 5 and hnorm in ident)
+                        or (len(ident) >= 5 and ident in hnorm)
+                        for ident in identities
+                    ):
+                        print('INSTAGRAM WEB SEARCH: verified handle =', handle,
+                              '| provider =', provider_name, '| query =', query)
+                        return handle
+            except requests.RequestException as error:
+                print('INSTAGRAM WEB SEARCH ERROR:', provider_name, repr(error))
+            except Exception as error:
+                # A malformed search page must never interrupt the monitor.
+                print('INSTAGRAM WEB SEARCH PARSE ERROR:', provider_name, repr(error))
 
     return None
 
